@@ -11,8 +11,13 @@ import com.cvrce.apraisal.exception.ResourceNotFoundException;
 import com.cvrce.apraisal.repo.AppraisalFormRepository;
 import com.cvrce.apraisal.repo.AppraisalVersionRepository;
 import com.cvrce.apraisal.repo.ReviewRepository;
+import com.cvrce.apraisal.repo.ReviewerAssignmentRepository; // Added import
 import com.cvrce.apraisal.repo.UserRepository;
+import com.cvrce.apraisal.service.AppraisalFormService; // Added import
+import com.cvrce.apraisal.service.NotificationService; // Added
+import com.cvrce.apraisal.dto.notification.NotificationDTO; // Added
 import com.cvrce.apraisal.service.ReviewService;
+import com.cvrce.apraisal.enums.AppraisalStatus; // Added import
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -35,6 +40,9 @@ public class ReviewServiceImpl implements ReviewService {
     private final AppraisalVersionRepository versionRepo;
     private final UserRepository userRepo;
     private final ObjectMapper objectMapper;
+    private final AppraisalFormService appraisalFormService; // Added AppraisalFormService
+    private final ReviewerAssignmentRepository reviewerAssignmentRepository; // Added
+    private final NotificationService notificationService; // Added
 
     @Override
     @Transactional
@@ -61,10 +69,155 @@ public class ReviewServiceImpl implements ReviewService {
 
         Review saved = reviewRepo.save(review);
 
+        // Workflow logic starts
+        AppraisalStatus newStatus = null;
+        String reviewRemarksForStatusUpdate = "Review submitted at level " + review.getLevel() + 
+                                         " with decision " + review.getDecision() + 
+                                         " by " + reviewer.getFullName() + "." +
+                                         (review.getRemarks() != null && !review.getRemarks().isEmpty() ? " Reviewer Remarks: " + review.getRemarks() : "");
+
+        switch (review.getLevel()) {
+            case DEPARTMENT_REVIEW:
+                if (review.getDecision() == ReviewDecision.REUPLOAD) {
+                    newStatus = AppraisalStatus.REUPLOAD_REQUIRED;
+                    reviewRemarksForStatusUpdate = "Form requires re-upload based on Department Committee review by " + reviewer.getFullName() + 
+                                                   (review.getRemarks() != null && !review.getRemarks().isEmpty() ? ". Remarks: " + review.getRemarks() : "");
+                } else if (review.getDecision() == ReviewDecision.APPROVE) {
+                    // Check if all assigned department committee members for this form have approved
+                    long totalAssigned = reviewerAssignmentRepository.countByAppraisalFormId(form.getId()); 
+                    // This count needs to be specific to "Department Committee" members.
+                    // Assuming all assignments for a form are for the current active review level's committee.
+                    // This might need refinement if a form can have assignments for multiple committee types simultaneously.
+                    // For now, let's assume ReviewerAssignments are cleaned up or specific to the active phase.
+                    // A more robust way would be to link ReviewerAssignment to a ReviewLevel or Role type.
+                    // Let's assume for now: count all assignments on the form as being part of the current committee.
+
+                    List<Review> allReviewsAtLevel = reviewRepo.findByAppraisalFormIdAndLevel(form.getId(), review.getLevel());
+                    long approvedCount = allReviewsAtLevel.stream().filter(r -> r.getDecision() == ReviewDecision.APPROVE).count();
+                    boolean anyReupload = allReviewsAtLevel.stream().anyMatch(r -> r.getDecision() == ReviewDecision.REUPLOAD);
+
+                    if (!anyReupload && approvedCount == totalAssigned) {
+                        newStatus = AppraisalStatus.HOD_REVIEW; // All approved, HOD needs to act
+                        reviewRemarksForStatusUpdate = "Department Committee has collectively approved. Pending HOD action.";
+                    } else {
+                        // Not all have reviewed, or not all approved, or some reupload exists (which should have been caught above)
+                        // No status change yet from this individual approval if aggregation conditions not met.
+                        // The form remains in DEPARTMENT_REVIEW.
+                    }
+                }
+                break;
+
+            case HOD_REVIEW:
+                if (review.getDecision() == ReviewDecision.REUPLOAD) {
+                    newStatus = AppraisalStatus.REUPLOAD_REQUIRED; // To be handled by staff
+                } else if (review.getDecision() == ReviewDecision.APPROVE) {
+                    // HOD approves their department's review, ready for Chairperson
+                    newStatus = AppraisalStatus.HOD_APPROVED; 
+                } else if (review.getDecision() == ReviewDecision.FORWARD) {
+                    // HOD forwards to Verifying Staff
+                    newStatus = AppraisalStatus.PENDING_VERIFICATION;
+                    // Later, add logic to assign to Verifying Staff (Step 4)
+                }
+                break;
+
+            case VERIFYING_STAFF_REVIEW: // New Level
+                if (review.getDecision() == ReviewDecision.REUPLOAD) {
+                    newStatus = AppraisalStatus.RETURNED_TO_HOD; // Verifying staff sends back to HOD
+                } else if (review.getDecision() == ReviewDecision.APPROVE) {
+                    newStatus = AppraisalStatus.HOD_APPROVED; // Verification successful, effectively HOD approved to move to Chairperson
+                }
+                break;
+            
+            case COLLEGE_COMMITTEE_REVIEW:
+                if (review.getDecision() == ReviewDecision.REUPLOAD) {
+                    newStatus = AppraisalStatus.RETURNED_TO_CHAIRPERSON;
+                    reviewRemarksForStatusUpdate = "Form returned to Chairperson based on College Committee review by " + reviewer.getFullName() +
+                                                   (review.getRemarks() != null && !review.getRemarks().isEmpty() ? ". Remarks: " + review.getRemarks() : "");
+                } else if (review.getDecision() == ReviewDecision.APPROVE) {
+                    // Check if all assigned college committee members for this form have approved
+                    long totalAssigned = reviewerAssignmentRepository.countByAppraisalFormId(form.getId()); // See note above for DEPARTMENT_REVIEW
+                    List<Review> allReviewsAtLevel = reviewRepo.findByAppraisalFormIdAndLevel(form.getId(), review.getLevel());
+                    long approvedCount = allReviewsAtLevel.stream().filter(r -> r.getDecision() == ReviewDecision.APPROVE).count();
+                    boolean anyReupload = allReviewsAtLevel.stream().anyMatch(r -> r.getDecision() == ReviewDecision.REUPLOAD);
+
+                    if (!anyReupload && approvedCount == totalAssigned) {
+                        newStatus = AppraisalStatus.CHAIR_REVIEW; // All approved, Chairperson needs to act
+                        reviewRemarksForStatusUpdate = "College Committee has collectively approved. Pending Chairperson action.";
+                    } else {
+                        // No status change yet from this individual approval if aggregation conditions not met.
+                        // The form remains in COLLEGE_REVIEW.
+                    }
+                }
+                break;
+
+            case CHAIRPERSON_REVIEW:
+                if (review.getDecision() == ReviewDecision.REUPLOAD) {
+                    newStatus = AppraisalStatus.RETURNED_TO_HOD; // Chairperson sends back to HOD
+                } else if (review.getDecision() == ReviewDecision.APPROVE) {
+                     // This means Chairperson has reviewed and approved (e.g. after college committee)
+                     // but is not yet forwarding to Principal. Or it's an intermediate approval.
+                     // For the workflow: Chairperson forwards to Principal is a FORWARD decision.
+                    newStatus = AppraisalStatus.CHAIR_REVIEW; // Stays in CHAIR_REVIEW, or a new PENDING_CHAIRPERSON_FORWARD_TO_PRINCIPAL
+                } else if (review.getDecision() == ReviewDecision.FORWARD) {
+                    // Chairperson forwards to Principal
+                    newStatus = AppraisalStatus.PENDING_PRINCIPAL_APPROVAL;
+                    // Later, add logic to assign to Principal (Step 4)
+                }
+                break;
+
+            case PRINCIPAL_REVIEW: // New Level
+                if (review.getDecision() == ReviewDecision.REUPLOAD) {
+                    newStatus = AppraisalStatus.RETURNED_TO_CHAIRPERSON; // Principal sends back to Chairperson
+                } else if (review.getDecision() == ReviewDecision.APPROVE) {
+                    newStatus = AppraisalStatus.COMPLETED; // Final approval
+                }
+                break;
+        }
+
+        if (newStatus != null && newStatus != form.getStatus()) { // Only update if status is actually changing
+            appraisalFormService.updateAppraisalStatus(form.getId(), newStatus, reviewRemarksForStatusUpdate, reviewer.getId());
+            log.info("AppraisalForm {} status updated to {} due to review by {}", form.getId(), newStatus, reviewer.getId());
+
+            // Send notification to the staff member if status is critical for them
+            String notificationTitle = null;
+            String notificationMessage = null;
+
+            if (newStatus == AppraisalStatus.REUPLOAD_REQUIRED) {
+                notificationTitle = "Appraisal Form Requires Re-upload";
+                notificationMessage = "Your appraisal form (ID: " + form.getId() + ") for academic year " + form.getAcademicYear() + 
+                                      " has been returned and requires re-upload. Reviewer remarks: " + 
+                                      (review.getRemarks() != null && !review.getRemarks().isEmpty() ? review.getRemarks() : "No specific remarks provided by reviewer.");
+            } else if (newStatus == AppraisalStatus.COMPLETED) {
+                notificationTitle = "Appraisal Form Approved";
+                notificationMessage = "Congratulations! Your appraisal form (ID: " + form.getId() + ") for academic year " + form.getAcademicYear() + 
+                                      " has been approved and completed.";
+            } else if (newStatus == AppraisalStatus.RETURNED_TO_HOD || newStatus == AppraisalStatus.RETURNED_TO_CHAIRPERSON) {
+                // These might be relevant for the staff to know their form is moving back in the chain, though not directly actionable by them.
+                // For now, as per prompt, focusing on REUPLOAD_REQUIRED and COMPLETED.
+                // Consider adding these if comprehensive staff visibility is desired.
+            }
+
+
+            if (notificationTitle != null && notificationMessage != null) {
+                NotificationDTO staffNotification = NotificationDTO.builder()
+                        .userId(form.getUser().getId()) // Notify the original staff member
+                        .title(notificationTitle)
+                        .message(notificationMessage)
+                        .build();
+                try {
+                    notificationService.sendNotification(staffNotification);
+                    log.info("Sent '{}' notification to staff {} for form {}", notificationTitle, form.getUser().getId(), form.getId());
+                } catch (Exception e) {
+                    log.error("Failed to send '{}' notification to staff {}: {}", notificationTitle, form.getUser().getId(), e.getMessage());
+                }
+            }
+        }
+        // Workflow logic ends
+
         versionRepo.save(
                 AppraisalVersion.builder()
                         .appraisalForm(form)
-                        .statusAtVersion(form.getStatus())
+                        .statusAtVersion(form.getStatus()) // This will capture status *before* updateAppraisalStatus if it changed
                         .remarks("Reviewed by " + review.getLevel() + " - " + review.getDecision())
                         .versionTimestamp(LocalDateTime.now())
                         .serializedSnapshot(serializeForm(form))
