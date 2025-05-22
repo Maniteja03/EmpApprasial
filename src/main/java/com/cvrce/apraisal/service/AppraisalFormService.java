@@ -12,7 +12,6 @@ public interface AppraisalFormService {
     AppraisalFormDTO submit(UUID formId); // locks and submits
     List<AppraisalFormDTO> filterByStatus(AppraisalStatus status);
     AppraisalFormDTO getById(UUID formId);
-    AppraisalFormDTO updateAppraisalStatus(UUID formId, AppraisalStatus newStatus, String remark, UUID changedByUserId);
 
 
 }
