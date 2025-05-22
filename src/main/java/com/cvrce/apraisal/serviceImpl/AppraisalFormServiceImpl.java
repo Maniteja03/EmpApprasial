@@ -11,6 +11,8 @@ import com.cvrce.apraisal.repo.AppraisalVersionRepository;
 import com.cvrce.apraisal.repo.UserRepository;
 import com.cvrce.apraisal.service.AppraisalFormService;
 import com.cvrce.apraisal.service.DeadlineService;
+import com.cvrce.apraisal.service.NotificationService; // Added
+import com.cvrce.apraisal.dto.notification.NotificationDTO; // Added
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +36,7 @@ public class AppraisalFormServiceImpl implements AppraisalFormService {
     private final UserRepository userRepository;
     private final DeadlineService deadlineService;
     private final ObjectMapper objectMapper;
+    private final NotificationService notificationService; // Added
 
     @Override
     public AppraisalFormDTO createDraftForm(String academicYear, UUID userId) {
@@ -146,5 +149,54 @@ public class AppraisalFormServiceImpl implements AppraisalFormService {
         AppraisalForm form = formRepository.findById(formId)
                 .orElseThrow(() -> new ResourceNotFoundException("Form not found"));
         return mapToDTO(form);
+    }
+
+    @Override
+    @org.springframework.transaction.annotation.Transactional
+    public AppraisalFormDTO updateAppraisalStatus(UUID formId, AppraisalStatus newStatus, String remark, UUID changedByUserId) {
+        AppraisalForm form = formRepository.findById(formId)
+                .orElseThrow(() -> new ResourceNotFoundException("AppraisalForm not found with id: " + formId));
+
+        User changedByUser = userRepository.findById(changedByUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + changedByUserId));
+
+        form.setStatus(newStatus);
+        AppraisalForm savedForm = formRepository.save(form);
+
+        // Notify the user whose form status changed
+        String notificationTitle = "Appraisal Form Status Updated";
+        String notificationMessage = "Your appraisal form for academic year " + savedForm.getAcademicYear() +
+                                     " has been updated to status: " + savedForm.getStatus() + "." +
+                                     (remark != null && !remark.isEmpty() ? " Remark: " + remark : "");
+        
+        NotificationDTO userNotification = NotificationDTO.builder()
+                .userId(savedForm.getUser().getId())
+                .title(notificationTitle)
+                .message(notificationMessage)
+                .build();
+        try {
+            notificationService.sendNotification(userNotification);
+            log.info("Sent status update notification to user {} for form {}", savedForm.getUser().getId(), savedForm.getId());
+        } catch (Exception e) {
+            log.error("Failed to send status update notification to user {} for form {}: {}", savedForm.getUser().getId(), savedForm.getId(), e.getMessage());
+            // Decide if this failure should be critical or just logged. For now, just log.
+        }
+
+        String versionRemark = "Status changed to " + newStatus +
+                " by " + changedByUser.getFullName() + "." +
+                (remark != null && !remark.isEmpty() ? " Remark: " + remark : "");
+
+        versionRepo.save(
+                AppraisalVersion.builder()
+                        .appraisalForm(savedForm)
+                        .statusAtVersion(savedForm.getStatus())
+                        .remarks(versionRemark)
+                        .versionTimestamp(LocalDateTime.now())
+                        .serializedSnapshot(serializeForm(savedForm)) // Assuming serializeForm exists
+                        .build()
+        );
+
+        log.info("AppraisalForm {} status updated to {} by user {}", formId, newStatus, changedByUserId);
+        return mapToDTO(savedForm); // Assuming mapToDTO exists
     }
 }
