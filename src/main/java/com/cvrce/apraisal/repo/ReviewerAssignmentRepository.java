@@ -9,5 +9,4 @@ import java.util.UUID;
 public interface ReviewerAssignmentRepository extends JpaRepository<ReviewerAssignment, UUID> {
     List<ReviewerAssignment> findByReviewerId(UUID reviewerId);
     List<ReviewerAssignment> findByAppraisalFormId(UUID appraisalFormId);
-    long countByAppraisalFormId(UUID appraisalFormId); // Added
 }

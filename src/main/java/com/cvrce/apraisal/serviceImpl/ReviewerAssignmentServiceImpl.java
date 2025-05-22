@@ -9,11 +9,6 @@ import com.cvrce.apraisal.repo.AppraisalFormRepository;
 import com.cvrce.apraisal.repo.ReviewerAssignmentRepository;
 import com.cvrce.apraisal.repo.UserRepository;
 import com.cvrce.apraisal.service.ReviewerAssignmentService;
-import com.cvrce.apraisal.service.AppraisalFormService; // Added
-import com.cvrce.apraisal.enums.AppraisalStatus; // Added
-import com.cvrce.apraisal.enums.ReviewLevel; // Added
-import com.cvrce.apraisal.service.NotificationService; // Added
-import com.cvrce.apraisal.dto.notification.NotificationDTO; // Added
 
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -31,8 +26,6 @@ public class ReviewerAssignmentServiceImpl implements ReviewerAssignmentService 
     private final ReviewerAssignmentRepository assignmentRepo;
     private final AppraisalFormRepository formRepo;
     private final UserRepository userRepo;
-    private final AppraisalFormService appraisalFormService; // Added
-    private final NotificationService notificationService; // Added
 
     @Override
     public ReviewerAssignmentDTO assignReviewer(ReviewerAssignmentDTO dto) {
@@ -86,151 +79,5 @@ public class ReviewerAssignmentServiceImpl implements ReviewerAssignmentService 
         dto.setReviewerName(assignment.getReviewer().getFullName());
         dto.setAppraisalFormId(assignment.getAppraisalForm().getId());
         return dto;
-    }
-
-    @Override
-    @Transactional
-    public List<ReviewerAssignmentDTO> assignToDepartmentCommittee(UUID formId, List<UUID> memberIds, UUID assignedByUserId) {
-        AppraisalForm form = formRepo.findById(formId)
-                .orElseThrow(() -> new ResourceNotFoundException("Form not found: " + formId));
-        User assigner = userRepo.findById(assignedByUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("Assigner User not found: " + assignedByUserId));
-
-        List<ReviewerAssignment> assignments = new ArrayList<>();
-        for (UUID memberId : memberIds) {
-            User committeeMember = userRepo.findById(memberId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Committee member User not found: " + memberId));
-            
-            ReviewerAssignment assignment = ReviewerAssignment.builder()
-                    .reviewer(committeeMember)
-                    .appraisalForm(form)
-                    .build();
-            assignments.add(assignmentRepo.save(assignment));
-            log.info("Assigned Dept. Committee member {} to form {}", memberId, formId);
-        }
-        
-        String remark = "Assigned to Department Committee by " + assigner.getFullName();
-        appraisalFormService.updateAppraisalStatus(formId, AppraisalStatus.DEPARTMENT_REVIEW, remark, assignedByUserId);
-        
-        // Notify committee members
-        String committeeNotificationTitle = "New Appraisal Form Assignment";
-        String committeeNotificationMessageBase = "You have been assigned to the Department Committee for appraisal form ID: " + formId + 
-                                               " (Academic Year: " + form.getAcademicYear() + 
-                                               " for staff member: " + form.getUser().getFullName() + ").";
-
-        for (ReviewerAssignment currentAssignment : assignments) {
-            NotificationDTO memberNotification = NotificationDTO.builder()
-                    .userId(currentAssignment.getReviewer().getId())
-                    .title(committeeNotificationTitle)
-                    .message(committeeNotificationMessageBase)
-                    .build();
-            try {
-                notificationService.sendNotification(memberNotification);
-            } catch (Exception e) {
-                log.error("Failed to send assignment notification to dept committee member {}: {}", currentAssignment.getReviewer().getId(), e.getMessage());
-            }
-        }
-        
-        return assignments.stream().map(this::mapToDTO).collect(Collectors.toList());
-    }
-
-    @Override
-    @Transactional
-    public List<ReviewerAssignmentDTO> assignToCollegeCommittee(UUID formId, List<UUID> memberIds, UUID assignedByUserId) {
-        AppraisalForm form = formRepo.findById(formId)
-                .orElseThrow(() -> new ResourceNotFoundException("Form not found: " + formId));
-        User assigner = userRepo.findById(assignedByUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("Assigner User not found: " + assignedByUserId));
-
-        List<ReviewerAssignment> assignments = new ArrayList<>();
-        for (UUID memberId : memberIds) {
-            User committeeMember = userRepo.findById(memberId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Committee member User not found: " + memberId));
-
-            ReviewerAssignment assignment = ReviewerAssignment.builder()
-                    .reviewer(committeeMember)
-                    .appraisalForm(form)
-                    .build();
-            assignments.add(assignmentRepo.save(assignment));
-            log.info("Assigned College Committee member {} to form {}", memberId, formId);
-        }
-
-        String remark = "Assigned to College Committee by " + assigner.getFullName();
-        appraisalFormService.updateAppraisalStatus(formId, AppraisalStatus.COLLEGE_REVIEW, remark, assignedByUserId);
-
-        // Notify committee members
-        String collegeCommitteeNotificationTitle = "New Appraisal Form Assignment";
-        String collegeCommitteeNotificationMessageBase = "You have been assigned to the College Committee for appraisal form ID: " + formId +
-                                                      " (Academic Year: " + form.getAcademicYear() +
-                                                      " for staff member: " + form.getUser().getFullName() + ").";
-                                                      
-        for (ReviewerAssignment currentAssignment : assignments) {
-            NotificationDTO memberNotification = NotificationDTO.builder()
-                    .userId(currentAssignment.getReviewer().getId())
-                    .title(collegeCommitteeNotificationTitle)
-                    .message(collegeCommitteeNotificationMessageBase)
-                    .build();
-            try {
-                notificationService.sendNotification(memberNotification);
-            } catch (Exception e) {
-                log.error("Failed to send assignment notification to college committee member {}: {}", currentAssignment.getReviewer().getId(), e.getMessage());
-            }
-        }
-
-        return assignments.stream().map(this::mapToDTO).collect(Collectors.toList());
-    }
-
-    @Override
-    @Transactional
-    public ReviewerAssignmentDTO assignToUserForReview(UUID formId, UUID reviewerId, ReviewLevel level, UUID assignedByUserId) {
-        AppraisalForm form = formRepo.findById(formId)
-                .orElseThrow(() -> new ResourceNotFoundException("Form not found: " + formId));
-        User reviewer = userRepo.findById(reviewerId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reviewer User not found: " + reviewerId));
-        User assigner = userRepo.findById(assignedByUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("Assigner User not found: " + assignedByUserId));
-
-        ReviewerAssignment assignment = ReviewerAssignment.builder()
-                .reviewer(reviewer)
-                .appraisalForm(form)
-                .build();
-        ReviewerAssignment savedAssignment = assignmentRepo.save(assignment);
-        log.info("Assigned user {} for {} to form {}", reviewerId, level, formId);
-
-        AppraisalStatus newStatus;
-        String remark = "Assigned for " + level + " by " + assigner.getFullName();
-
-        switch (level) {
-            case VERIFYING_STAFF_REVIEW:
-                newStatus = AppraisalStatus.PENDING_VERIFICATION;
-                break;
-            case PRINCIPAL_REVIEW:
-                newStatus = AppraisalStatus.PENDING_PRINCIPAL_APPROVAL;
-                break;
-            default:
-                 throw new IllegalArgumentException("Review level " + level + " is not configured for direct status update in assignToUserForReview.");
-        }
-
-        appraisalFormService.updateAppraisalStatus(formId, newStatus, remark, assignedByUserId);
-        
-        // Notify the assigned reviewer
-        String userReviewNotificationTitle = "New Appraisal Form Review Assignment";
-        String userReviewNotificationMessage = "You have been assigned to review appraisal form ID: " + formId +
-                                               " (Academic Year: " + form.getAcademicYear() +
-                                               " for staff member: " + form.getUser().getFullName() + ")" +
-                                               " at review level: " + level + ".";
-
-        NotificationDTO reviewerNotification = NotificationDTO.builder()
-                .userId(reviewerId)
-                .title(userReviewNotificationTitle)
-                .message(userReviewNotificationMessage)
-                .build();
-        try {
-            notificationService.sendNotification(reviewerNotification);
-        } catch (Exception e) {
-            log.error("Failed to send assignment notification to user {}: {}", reviewerId, e.getMessage());
-        }
-        
-        return mapToDTO(savedAssignment);
     }
 }
