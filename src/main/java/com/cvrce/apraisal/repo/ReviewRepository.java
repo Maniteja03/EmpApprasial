@@ -25,4 +25,5 @@ public interface ReviewRepository extends JpaRepository<Review, UUID> {
     @Query("SELECT COUNT(r) FROM Review r WHERE r.decision = 'REUPLOAD'")
     long countReupload();
 
+    List<Review> findByAppraisalFormIdAndLevel(UUID appraisalFormId, com.cvrce.apraisal.enums.ReviewLevel level);
 }
