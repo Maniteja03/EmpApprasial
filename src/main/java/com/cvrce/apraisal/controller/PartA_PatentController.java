@@ -3,10 +3,12 @@ package com.cvrce.apraisal.controller;
 import com.cvrce.apraisal.dto.parta.PatentDTO;
 import com.cvrce.apraisal.service.PartA_PatentService;
 
+import com.cvrce.apraisal.dto.parta.HodUpdatePartAPatentDTO; // Added
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -43,5 +45,17 @@ public class PartA_PatentController {
         log.info("Deleting patent ID {}", id);
         patentService.deletePatent(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{patentId}/hod-edit")
+    @PreAuthorize("hasAuthority('ROLE_HOD')")
+    public ResponseEntity<PatentDTO> hodEditPatent(
+            @PathVariable UUID patentId,
+            @RequestBody HodUpdatePartAPatentDTO dto
+    ) {
+        UUID hodUserId = UUID.randomUUID(); // Placeholder
+        log.info("API: HOD {} editing PartA_Patent {}", hodUserId, patentId);
+        PatentDTO updatedDto = patentService.hodUpdatePatent(patentId, dto, hodUserId);
+        return ResponseEntity.ok(updatedDto);
     }
 }

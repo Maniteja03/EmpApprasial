@@ -2,9 +2,11 @@ package com.cvrce.apraisal.controller;
 
 import com.cvrce.apraisal.dto.partc.EBoxTrainingDTO;
 import com.cvrce.apraisal.service.PartC_EBoxTrainingService;
+import com.cvrce.apraisal.dto.partc.HodUpdatePartCEBoxTrainingDTO; // Added
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -38,5 +40,17 @@ public class PartC_EBoxTrainingController {
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         eboxService.deleteEBoxTraining(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{eboxTrainingId}/hod-edit")
+    @PreAuthorize("hasAuthority('ROLE_HOD')")
+    public ResponseEntity<EBoxTrainingDTO> hodEditEBoxTraining(
+            @PathVariable UUID eboxTrainingId,
+            @RequestBody HodUpdatePartCEBoxTrainingDTO dto
+    ) {
+        UUID hodUserId = UUID.randomUUID(); // Placeholder
+        log.info("API: HOD {} editing PartC_EBoxTraining {}", hodUserId, eboxTrainingId);
+        EBoxTrainingDTO updatedDto = eboxService.hodUpdateEBoxTraining(eboxTrainingId, dto, hodUserId);
+        return ResponseEntity.ok(updatedDto);
     }
 }

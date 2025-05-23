@@ -2,9 +2,11 @@ package com.cvrce.apraisal.controller;
 
 import com.cvrce.apraisal.dto.partb.PassingPercentageDTO;
 import com.cvrce.apraisal.service.PartB_PassingPercentageService;
+import com.cvrce.apraisal.dto.partb.HodUpdatePartBPassingPercentageDTO; // Added
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -40,5 +42,17 @@ public class PartB_PassingPercentageController {
         log.info("Deleting passing percentage with ID {}", id);
         service.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{passingPercentageId}/hod-edit")
+    @PreAuthorize("hasAuthority('ROLE_HOD')")
+    public ResponseEntity<PassingPercentageDTO> hodEditPassingPercentage(
+            @PathVariable UUID passingPercentageId,
+            @RequestBody HodUpdatePartBPassingPercentageDTO dto
+    ) {
+        UUID hodUserId = UUID.randomUUID(); // Placeholder
+        log.info("API: HOD {} editing PartB_PassingPercentage {}", hodUserId, passingPercentageId);
+        PassingPercentageDTO updatedDto = service.hodUpdatePassingPercentage(passingPercentageId, dto, hodUserId);
+        return ResponseEntity.ok(updatedDto);
     }
 }

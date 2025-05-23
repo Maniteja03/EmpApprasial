@@ -7,6 +7,15 @@ import com.cvrce.apraisal.exception.ResourceNotFoundException;
 import com.cvrce.apraisal.repo.AppraisalFormRepository;
 import com.cvrce.apraisal.repo.PartB_EventRepository;
 import com.cvrce.apraisal.service.PartB_EventService;
+import com.cvrce.apraisal.dto.partb.HodUpdatePartBEventDTO; // Added
+import com.cvrce.apraisal.entity.AppraisalVersion; // Added
+import com.cvrce.apraisal.repo.AppraisalVersionRepository; // Added
+import com.cvrce.apraisal.repo.UserRepository; // Added
+import com.cvrce.apraisal.entity.User; // Added
+import com.cvrce.apraisal.enums.AppraisalStatus; // Added
+import com.fasterxml.jackson.databind.ObjectMapper; // Added
+import com.fasterxml.jackson.core.JsonProcessingException; // Added
+import java.time.LocalDateTime; // Added
 
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +33,9 @@ public class PartB_EventServiceImpl implements PartB_EventService {
 
     private final PartB_EventRepository eventRepo;
     private final AppraisalFormRepository formRepo;
+    private final UserRepository userRepository; // Added
+    private final AppraisalVersionRepository versionRepository; // Added
+    private final ObjectMapper objectMapper; // Added
 
     @Override
     @Transactional
@@ -101,5 +113,56 @@ public class PartB_EventServiceImpl implements PartB_EventService {
         dto.setPointsClaimed(event.getPointsClaimed());
         dto.setProofFilePath(event.getProofFilePath());
         return dto;
+    }
+
+    @Override
+    @Transactional
+    public EventDTO hodUpdateEvent(UUID eventId, HodUpdatePartBEventDTO dto, UUID hodUserId) {
+        User hodUser = userRepository.findById(hodUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("HOD User not found: " + hodUserId));
+
+        PartB_Event event = eventRepo.findById(eventId)
+                .orElseThrow(() -> new ResourceNotFoundException("Event not found: " + eventId));
+
+        AppraisalForm form = event.getAppraisalForm();
+        if (form.getStatus() != AppraisalStatus.REUPLOAD_REQUIRED) {
+            throw new IllegalStateException("HOD can only edit events when the appraisal form status is REUPLOAD_REQUIRED. Current status: " + form.getStatus());
+        }
+
+        // Update fields
+        event.setEventType(dto.getEventType());
+        event.setEventTitle(dto.getEventTitle());
+        event.setRole(dto.getRole());
+        event.setOrganization(dto.getOrganization());
+        event.setVenue(dto.getVenue());
+        event.setStartDate(dto.getStartDate());
+        event.setEndDate(dto.getEndDate());
+        event.setPointsClaimed(dto.getPointsClaimed());
+        event.setProofFilePath(dto.getProofFilePath());
+        
+        PartB_Event updatedEvent = eventRepo.save(event);
+
+        // Create AppraisalVersion
+        String versionRemark = String.format("HOD %s modified Part B Event: %s. Previous status: REUPLOAD_REQUIRED.",
+                hodUser.getFullName(), updatedEvent.getEventTitle());
+        
+        String snapshot = null;
+        try {
+            snapshot = objectMapper.writeValueAsString(form); // Serialize the whole form
+        } catch (JsonProcessingException e) {
+            log.error("Error serializing AppraisalForm for versioning during HOD edit of event: {}", e.getMessage());
+        }
+
+        AppraisalVersion version = AppraisalVersion.builder()
+                .appraisalForm(form)
+                .statusAtVersion(AppraisalStatus.REUPLOAD_REQUIRED) // Status *during* which edit occurred
+                .remarks(versionRemark)
+                .versionTimestamp(LocalDateTime.now())
+                .serializedSnapshot(snapshot)
+                .build();
+        versionRepository.save(version);
+
+        log.info("HOD {} updated event {}. Form {} remains REUPLOAD_REQUIRED.", hodUserId, eventId, form.getId());
+        return mapToDTO(updatedEvent);
     }
 }

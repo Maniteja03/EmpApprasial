@@ -2,9 +2,11 @@ package com.cvrce.apraisal.controller;
 
 import com.cvrce.apraisal.dto.partb.ProjectGuidanceDTO;
 import com.cvrce.apraisal.service.PartB_ProjectGuidanceService;
+import com.cvrce.apraisal.dto.partb.HodUpdatePartBProjectGuidanceDTO; // Added
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -40,5 +42,17 @@ public class PartB_ProjectGuidanceController {
         log.info("Deleting project guidance with ID {}", id);
         service.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{projectGuidanceId}/hod-edit")
+    @PreAuthorize("hasAuthority('ROLE_HOD')")
+    public ResponseEntity<ProjectGuidanceDTO> hodEditProjectGuidance(
+            @PathVariable UUID projectGuidanceId,
+            @RequestBody HodUpdatePartBProjectGuidanceDTO dto
+    ) {
+        UUID hodUserId = UUID.randomUUID(); // Placeholder
+        log.info("API: HOD {} editing PartB_ProjectGuidance {}", hodUserId, projectGuidanceId);
+        ProjectGuidanceDTO updatedDto = service.hodUpdateProjectGuidance(projectGuidanceId, dto, hodUserId);
+        return ResponseEntity.ok(updatedDto);
     }
 }

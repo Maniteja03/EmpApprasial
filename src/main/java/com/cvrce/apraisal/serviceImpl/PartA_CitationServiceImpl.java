@@ -7,6 +7,15 @@ import com.cvrce.apraisal.exception.ResourceNotFoundException;
 import com.cvrce.apraisal.repo.AppraisalFormRepository;
 import com.cvrce.apraisal.repo.PartA_CitationRepository;
 import com.cvrce.apraisal.service.PartA_CitationService;
+import com.cvrce.apraisal.dto.parta.HodUpdatePartACitationDTO; // Added
+import com.cvrce.apraisal.entity.AppraisalVersion; // Added
+import com.cvrce.apraisal.repo.AppraisalVersionRepository; // Added
+import com.cvrce.apraisal.repo.UserRepository; // Added
+import com.cvrce.apraisal.entity.User; // Added
+import com.cvrce.apraisal.enums.AppraisalStatus; // Added
+import com.fasterxml.jackson.databind.ObjectMapper; // Added
+import com.fasterxml.jackson.core.JsonProcessingException; // Added
+import java.time.LocalDateTime; // Added
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +32,9 @@ public class PartA_CitationServiceImpl implements PartA_CitationService {
 
     private final PartA_CitationRepository citationRepo;
     private final AppraisalFormRepository formRepo;
+    private final UserRepository userRepository; // Added
+    private final AppraisalVersionRepository versionRepository; // Added
+    private final ObjectMapper objectMapper; // Added
 
     @Override
     @Transactional
@@ -92,5 +104,52 @@ public class PartA_CitationServiceImpl implements PartA_CitationService {
                 .pointsClaimed(dto.getPointsClaimed())
                 .proofFilePath(dto.getProofFilePath())
                 .build();
+    }
+
+    @Override
+    @Transactional
+    public CitationDTO hodUpdateCitation(UUID citationId, HodUpdatePartACitationDTO dto, UUID hodUserId) {
+        User hodUser = userRepository.findById(hodUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("HOD User not found: " + hodUserId));
+
+        PartA_Citation citation = citationRepo.findById(citationId)
+                .orElseThrow(() -> new ResourceNotFoundException("Citation not found: " + citationId));
+
+        AppraisalForm form = citation.getAppraisalForm();
+        if (form.getStatus() != AppraisalStatus.REUPLOAD_REQUIRED) {
+            throw new IllegalStateException("HOD can only edit citations when the appraisal form status is REUPLOAD_REQUIRED. Current status: " + form.getStatus());
+        }
+
+        // Update fields
+        citation.setScopusAuthorId(dto.getScopusAuthorId());
+        citation.setCitationCount(dto.getCitationCount());
+        citation.setCitationYear(dto.getCitationYear());
+        citation.setPointsClaimed(dto.getPointsClaimed());
+        citation.setProofFilePath(dto.getProofFilePath());
+        
+        PartA_Citation updatedCitation = citationRepo.save(citation);
+
+        // Create AppraisalVersion
+        String versionRemark = String.format("HOD %s modified Part A Citation: ScopusID %s, Year %d. Previous status: REUPLOAD_REQUIRED.",
+                hodUser.getFullName(), updatedCitation.getScopusAuthorId(), updatedCitation.getCitationYear());
+        
+        String snapshot = null;
+        try {
+            snapshot = objectMapper.writeValueAsString(form); // Serialize the whole form
+        } catch (JsonProcessingException e) {
+            log.error("Error serializing AppraisalForm for versioning during HOD edit of citation: {}", e.getMessage());
+        }
+
+        AppraisalVersion version = AppraisalVersion.builder()
+                .appraisalForm(form)
+                .statusAtVersion(AppraisalStatus.REUPLOAD_REQUIRED) // Status *during* which edit occurred
+                .remarks(versionRemark)
+                .versionTimestamp(LocalDateTime.now())
+                .serializedSnapshot(snapshot)
+                .build();
+        versionRepository.save(version);
+
+        log.info("HOD {} updated citation {}. Form {} remains REUPLOAD_REQUIRED.", hodUserId, citationId, form.getId());
+        return mapToDTO(updatedCitation);
     }
 }

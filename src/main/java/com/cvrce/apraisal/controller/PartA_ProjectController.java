@@ -2,9 +2,11 @@ package com.cvrce.apraisal.controller;
 
 import com.cvrce.apraisal.dto.parta.ProjectDTO;
 import com.cvrce.apraisal.service.PartA_ProjectService;
+import com.cvrce.apraisal.dto.parta.HodUpdatePartAProjectDTO; // Added
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -40,5 +42,17 @@ public class PartA_ProjectController {
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         projectService.deleteProject(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{projectId}/hod-edit")
+    @PreAuthorize("hasAuthority('ROLE_HOD')")
+    public ResponseEntity<ProjectDTO> hodEditProject(
+            @PathVariable UUID projectId,
+            @RequestBody HodUpdatePartAProjectDTO dto
+    ) {
+        UUID hodUserId = UUID.randomUUID(); // Placeholder
+        log.info("API: HOD {} editing PartA_Project {}", hodUserId, projectId);
+        ProjectDTO updatedDto = projectService.hodUpdateProject(projectId, dto, hodUserId);
+        return ResponseEntity.ok(updatedDto);
     }
 }
