@@ -7,4 +7,6 @@ import com.cvrce.apraisal.dto.user.UserCreateDTO;
 public interface AuthService {
     LoginResponseDTO login(LoginRequestDTO request);
     void register(UserCreateDTO dto);
+    String initiatePasswordReset(String email); 
+    String resetPasswordWithOtp(String email, String otp, String newPassword);
 }

@@ -60,31 +60,36 @@ public class AuthController {
     // 📩 Request OTP for password reset
     @PostMapping("/request-otp")
     public ResponseEntity<String> requestOtp(@RequestParam String email) {
-        Optional<User> user = userRepository.findByEmail(email);
-        if (user.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+        // The authService.initiatePasswordReset method now handles:
+        // 1. Checking if user exists by email.
+        // 2. Calling otpService.generateOtp (which logs OTP and sends email).
+        // 3. Returning an appropriate user-facing message.
+        String serviceResponse = authService.initiatePasswordReset(email);
+        
+        // Determine HTTP status based on a convention if needed, or assume service handles logging of "user not found"
+        // For now, if service returns a message, assume it's generally an OK scenario from controller perspective.
+        // The service method itself prevents leaking info about whether email is registered.
+        if (serviceResponse.toLowerCase().contains("if your email address is registered")) { // Heuristic
+             return ResponseEntity.ok(serviceResponse);
+        } else {
+            // This case should ideally not be hit if the service always returns the generic message.
+            // But as a fallback, or if service changes its message.
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error processing request.");
         }
-
-        String otp = otpService.generateOtp(email);
-        // TODO: Integrate with real notification/email service
-        return ResponseEntity.ok("OTP sent to your email: " + otp); // Just return for testing
     }
 
     // 🔄 Reset password after OTP verification
     @PostMapping("/verify-otp-reset-password")
     public ResponseEntity<String> resetPasswordViaOtp(@RequestBody ResetPasswordRequest dto) {
-        if (!otpService.validateOtp(dto.getEmail(), dto.getOtp())) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid or expired OTP");
+        String serviceResponse = authService.resetPasswordWithOtp(dto.getEmail(), dto.getOtp(), dto.getNewPassword());
+
+        if (serviceResponse.toLowerCase().contains("successfully")) {
+            return ResponseEntity.ok(serviceResponse);
+        } else if (serviceResponse.toLowerCase().contains("invalid or expired otp")) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(serviceResponse);
+        } else {
+            // For other errors, e.g., user not found post-OTP validation (should be rare)
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(serviceResponse);
         }
-
-        User user = userRepository.findByEmail(dto.getEmail())
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        user.setPassword(passwordEncoder.encode(dto.getNewPassword()));
-        userRepository.save(user);
-
-        otpService.invalidateOtp(dto.getEmail()); // Clear OTP after use
-
-        return ResponseEntity.ok("Password updated successfully");
     }
 }
