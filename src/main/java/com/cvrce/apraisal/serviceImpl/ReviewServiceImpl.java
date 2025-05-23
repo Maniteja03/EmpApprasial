@@ -183,10 +183,10 @@ public class ReviewServiceImpl implements ReviewService {
             String notificationMessage = null;
 
             if (newStatus == AppraisalStatus.REUPLOAD_REQUIRED) {
-                notificationTitle = "Appraisal Form Requires Re-upload";
+                notificationTitle = "Action Required on Your Appraisal Form"; // New Title
                 notificationMessage = "Your appraisal form (ID: " + form.getId() + ") for academic year " + form.getAcademicYear() + 
-                                      " has been returned and requires re-upload. Reviewer remarks: " + 
-                                      (review.getRemarks() != null && !review.getRemarks().isEmpty() ? review.getRemarks() : "No specific remarks provided by reviewer.");
+                                      " requires corrections. Please contact your HOD to discuss and have the necessary changes made in the system. Reviewer remarks: " + 
+                                      (review.getRemarks() != null && !review.getRemarks().isEmpty() ? review.getRemarks() : "No specific remarks provided by reviewer."); // New Message
             } else if (newStatus == AppraisalStatus.COMPLETED) {
                 notificationTitle = "Appraisal Form Approved";
                 notificationMessage = "Congratulations! Your appraisal form (ID: " + form.getId() + ") for academic year " + form.getAcademicYear() + 

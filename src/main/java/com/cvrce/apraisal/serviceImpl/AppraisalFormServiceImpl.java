@@ -4,6 +4,7 @@ import com.cvrce.apraisal.dto.appraisal.AppraisalFormDTO;
 import com.cvrce.apraisal.entity.AppraisalForm;
 import com.cvrce.apraisal.entity.AppraisalVersion;
 import com.cvrce.apraisal.enums.AppraisalStatus;
+import com.cvrce.apraisal.enums.ReviewLevel; // Added
 import com.cvrce.apraisal.entity.User;
 import com.cvrce.apraisal.exception.ResourceNotFoundException;
 import com.cvrce.apraisal.repo.AppraisalFormRepository;
@@ -198,5 +199,65 @@ public class AppraisalFormServiceImpl implements AppraisalFormService {
 
         log.info("AppraisalForm {} status updated to {} by user {}", formId, newStatus, changedByUserId);
         return mapToDTO(savedForm); // Assuming mapToDTO exists
+    }
+
+    @Override
+    @org.springframework.transaction.annotation.Transactional
+    public AppraisalFormDTO hodFinalizeCorrections(UUID formId, UUID hodUserId, ReviewLevel restartReviewLevel) {
+        User hodUser = userRepository.findById(hodUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("HOD User not found: " + hodUserId));
+        // Add role check for HOD if not handled by controller security alone
+
+        AppraisalForm form = formRepository.findById(formId)
+                .orElseThrow(() -> new ResourceNotFoundException("AppraisalForm not found: " + formId));
+
+        if (form.getStatus() != AppraisalStatus.REUPLOAD_REQUIRED) {
+            throw new IllegalStateException("Form must be in REUPLOAD_REQUIRED status to finalize corrections. Current status: " + form.getStatus());
+        }
+
+        // Validate restartReviewLevel
+        if (restartReviewLevel != ReviewLevel.DEPARTMENT_REVIEW &&
+            restartReviewLevel != ReviewLevel.HOD_REVIEW &&
+            restartReviewLevel != ReviewLevel.VERIFYING_STAFF_REVIEW) {
+             throw new IllegalArgumentException("Invalid restart review level: " + restartReviewLevel + ". Must be DEPARTMENT_REVIEW, HOD_REVIEW, or VERIFYING_STAFF_REVIEW.");
+        }
+        
+        AppraisalStatus nextAppraisalStatus;
+        String remarkMessage = "HOD " + hodUser.getFullName() + " finalized corrections. ";
+
+        switch (restartReviewLevel) {
+            case DEPARTMENT_REVIEW:
+                nextAppraisalStatus = AppraisalStatus.DEPARTMENT_REVIEW;
+                remarkMessage += "Form moved to Department Review.";
+                break;
+            case HOD_REVIEW:
+                nextAppraisalStatus = AppraisalStatus.HOD_REVIEW;
+                remarkMessage += "Form moved to HOD Review.";
+                break;
+            case VERIFYING_STAFF_REVIEW: // This implies PENDING_VERIFICATION status
+                nextAppraisalStatus = AppraisalStatus.PENDING_VERIFICATION;
+                 remarkMessage += "Form moved to Pending Verification.";
+                break;
+            default: // Should be caught by validation above
+                 throw new IllegalArgumentException("Unsupported restart review level: " + restartReviewLevel);
+        }
+
+        // updateAppraisalStatus handles versioning and notification to staff user.
+        AppraisalFormDTO updatedFormDTO = this.updateAppraisalStatus(formId, nextAppraisalStatus, remarkMessage, hodUserId);
+
+        // Optional: Send a specific notification to the HOD who performed the action
+        NotificationDTO hodNotification = NotificationDTO.builder()
+                .userId(hodUserId)
+                .title("Corrections Finalized")
+                .message("You have successfully finalized corrections for appraisal form ID: " + form.getId() + 
+                         ". It has been moved to " + nextAppraisalStatus + ".")
+                .build();
+        try {
+            notificationService.sendNotification(hodNotification);
+        } catch (Exception e) {
+            log.error("Failed to send HOD finalization confirmation for form {}: {}", form.getId(), e.getMessage());
+        }
+
+        return updatedFormDTO;
     }
 }

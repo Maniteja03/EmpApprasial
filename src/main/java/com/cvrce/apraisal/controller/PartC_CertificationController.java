@@ -2,9 +2,11 @@ package com.cvrce.apraisal.controller;
 
 import com.cvrce.apraisal.dto.partc.CertificationDTO;
 import com.cvrce.apraisal.service.PartC_CertificationService;
+import com.cvrce.apraisal.dto.partc.HodUpdatePartCCertificationDTO; // Added
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -38,5 +40,17 @@ public class PartC_CertificationController {
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         certService.deleteCertification(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{certificationId}/hod-edit")
+    @PreAuthorize("hasAuthority('ROLE_HOD')")
+    public ResponseEntity<CertificationDTO> hodEditCertification(
+            @PathVariable UUID certificationId,
+            @RequestBody HodUpdatePartCCertificationDTO dto
+    ) {
+        UUID hodUserId = UUID.randomUUID(); // Placeholder
+        log.info("API: HOD {} editing PartC_Certification {}", hodUserId, certificationId);
+        CertificationDTO updatedDto = certService.hodUpdateCertification(certificationId, dto, hodUserId);
+        return ResponseEntity.ok(updatedDto);
     }
 }

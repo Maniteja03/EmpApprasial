@@ -2,9 +2,11 @@ package com.cvrce.apraisal.controller;
 
 import com.cvrce.apraisal.dto.partb.AdminWorkDTO;
 import com.cvrce.apraisal.service.PartB_AdminWorkService;
+import com.cvrce.apraisal.dto.partb.HodUpdatePartBAdminWorkDTO; // Added
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -40,5 +42,17 @@ public class PartB_AdminWorkController {
         log.info("Deleting admin work with ID {}", id);
         adminWorkService.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{adminWorkId}/hod-edit")
+    @PreAuthorize("hasAuthority('ROLE_HOD')")
+    public ResponseEntity<AdminWorkDTO> hodEditAdminWork(
+            @PathVariable UUID adminWorkId,
+            @RequestBody HodUpdatePartBAdminWorkDTO dto
+    ) {
+        UUID hodUserId = UUID.randomUUID(); // Placeholder
+        log.info("API: HOD {} editing PartB_AdminWork {}", hodUserId, adminWorkId);
+        AdminWorkDTO updatedDto = adminWorkService.hodUpdateAdminWork(adminWorkId, dto, hodUserId);
+        return ResponseEntity.ok(updatedDto);
     }
 }

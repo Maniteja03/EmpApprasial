@@ -2,10 +2,12 @@ package com.cvrce.apraisal.controller;
 
 import com.cvrce.apraisal.dto.parta.PublicationDTO;
 import com.cvrce.apraisal.service.PartA_PublicationService;
+import com.cvrce.apraisal.dto.parta.HodUpdatePartAPublicationDTO; // Added
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -42,5 +44,17 @@ public class PartA_PublicationController {
         log.info("Deleting publication with ID {}", id);
         publicationService.deletePublication(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{publicationId}/hod-edit")
+    @PreAuthorize("hasAuthority('ROLE_HOD')")
+    public ResponseEntity<PublicationDTO> hodEditPublication(
+            @PathVariable UUID publicationId,
+            @RequestBody HodUpdatePartAPublicationDTO dto
+    ) {
+        UUID hodUserId = UUID.randomUUID(); // Placeholder
+        log.info("API: HOD {} editing PartA_Publication {}", hodUserId, publicationId);
+        PublicationDTO updatedDto = publicationService.hodUpdatePublication(publicationId, dto, hodUserId);
+        return ResponseEntity.ok(updatedDto);
     }
 }

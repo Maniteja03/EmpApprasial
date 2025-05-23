@@ -7,6 +7,15 @@ import com.cvrce.apraisal.exception.ResourceNotFoundException;
 import com.cvrce.apraisal.repo.AppraisalFormRepository;
 import com.cvrce.apraisal.repo.PartB_AdminWorkRepository;
 import com.cvrce.apraisal.service.PartB_AdminWorkService;
+import com.cvrce.apraisal.dto.partb.HodUpdatePartBAdminWorkDTO; // Added
+import com.cvrce.apraisal.entity.AppraisalVersion; // Added
+import com.cvrce.apraisal.repo.AppraisalVersionRepository; // Added
+import com.cvrce.apraisal.repo.UserRepository; // Added
+import com.cvrce.apraisal.entity.User; // Added
+import com.cvrce.apraisal.enums.AppraisalStatus; // Added
+import com.fasterxml.jackson.databind.ObjectMapper; // Added
+import com.fasterxml.jackson.core.JsonProcessingException; // Added
+import java.time.LocalDateTime; // Added
 
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +32,9 @@ public class PartB_AdminWorkServiceImpl implements PartB_AdminWorkService {
 
     private final PartB_AdminWorkRepository adminRepo;
     private final AppraisalFormRepository formRepo;
+    private final UserRepository userRepository; // Added
+    private final AppraisalVersionRepository versionRepository; // Added
+    private final ObjectMapper objectMapper; // Added
 
     @Override
     @Transactional
@@ -83,5 +95,51 @@ public class PartB_AdminWorkServiceImpl implements PartB_AdminWorkService {
         dto.setProofFilePath(entity.getProofFilePath());
         dto.setPointsClaimed(entity.getPointsClaimed());
         return dto;
+    }
+
+    @Override
+    @Transactional
+    public AdminWorkDTO hodUpdateAdminWork(UUID adminWorkId, HodUpdatePartBAdminWorkDTO dto, UUID hodUserId) {
+        User hodUser = userRepository.findById(hodUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("HOD User not found: " + hodUserId));
+
+        PartB_AdminWork adminWork = adminRepo.findById(adminWorkId)
+                .orElseThrow(() -> new ResourceNotFoundException("Admin Work not found: " + adminWorkId));
+
+        AppraisalForm form = adminWork.getAppraisalForm();
+        if (form.getStatus() != AppraisalStatus.REUPLOAD_REQUIRED) {
+            throw new IllegalStateException("HOD can only edit admin work when the appraisal form status is REUPLOAD_REQUIRED. Current status: " + form.getStatus());
+        }
+
+        // Update fields
+        adminWork.setComponent(dto.getComponent());
+        adminWork.setDescription(dto.getDescription());
+        adminWork.setPointsClaimed(dto.getPointsClaimed());
+        adminWork.setProofFilePath(dto.getProofFilePath());
+        
+        PartB_AdminWork updatedAdminWork = adminRepo.save(adminWork);
+
+        // Create AppraisalVersion
+        String versionRemark = String.format("HOD %s modified Part B Admin Work: %s. Previous status: REUPLOAD_REQUIRED.",
+                hodUser.getFullName(), updatedAdminWork.getComponent()); // Using component as an identifier
+        
+        String snapshot = null;
+        try {
+            snapshot = objectMapper.writeValueAsString(form); // Serialize the whole form
+        } catch (JsonProcessingException e) {
+            log.error("Error serializing AppraisalForm for versioning during HOD edit of admin work: {}", e.getMessage());
+        }
+
+        AppraisalVersion version = AppraisalVersion.builder()
+                .appraisalForm(form)
+                .statusAtVersion(AppraisalStatus.REUPLOAD_REQUIRED) // Status *during* which edit occurred
+                .remarks(versionRemark)
+                .versionTimestamp(LocalDateTime.now())
+                .serializedSnapshot(snapshot)
+                .build();
+        versionRepository.save(version);
+
+        log.info("HOD {} updated admin work {}. Form {} remains REUPLOAD_REQUIRED.", hodUserId, adminWorkId, form.getId());
+        return mapToDTO(updatedAdminWork);
     }
 }
