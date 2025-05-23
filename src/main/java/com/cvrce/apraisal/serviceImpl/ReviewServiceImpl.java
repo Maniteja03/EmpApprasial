@@ -11,13 +11,8 @@ import com.cvrce.apraisal.exception.ResourceNotFoundException;
 import com.cvrce.apraisal.repo.AppraisalFormRepository;
 import com.cvrce.apraisal.repo.AppraisalVersionRepository;
 import com.cvrce.apraisal.repo.ReviewRepository;
-import com.cvrce.apraisal.repo.ReviewerAssignmentRepository; // Added import
 import com.cvrce.apraisal.repo.UserRepository;
-import com.cvrce.apraisal.service.AppraisalFormService; // Added import
-import com.cvrce.apraisal.service.NotificationService; // Added
-import com.cvrce.apraisal.dto.notification.NotificationDTO; // Added
 import com.cvrce.apraisal.service.ReviewService;
-import com.cvrce.apraisal.enums.AppraisalStatus; // Added import
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -40,9 +35,6 @@ public class ReviewServiceImpl implements ReviewService {
     private final AppraisalVersionRepository versionRepo;
     private final UserRepository userRepo;
     private final ObjectMapper objectMapper;
-    private final AppraisalFormService appraisalFormService; // Added AppraisalFormService
-    private final ReviewerAssignmentRepository reviewerAssignmentRepository; // Added
-    private final NotificationService notificationService; // Added
 
     @Override
     @Transactional
@@ -68,6 +60,7 @@ public class ReviewServiceImpl implements ReviewService {
                 .build();
 
         Review saved = reviewRepo.save(review);
+
 
         // Workflow logic starts
         AppraisalStatus newStatus = null;
@@ -214,10 +207,11 @@ public class ReviewServiceImpl implements ReviewService {
         }
         // Workflow logic ends
 
+
         versionRepo.save(
                 AppraisalVersion.builder()
                         .appraisalForm(form)
-                        .statusAtVersion(form.getStatus()) // This will capture status *before* updateAppraisalStatus if it changed
+                        .statusAtVersion(form.getStatus())
                         .remarks("Reviewed by " + review.getLevel() + " - " + review.getDecision())
                         .versionTimestamp(LocalDateTime.now())
                         .serializedSnapshot(serializeForm(form))

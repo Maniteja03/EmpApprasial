@@ -12,8 +12,6 @@ import com.cvrce.apraisal.repo.AppraisalVersionRepository;
 import com.cvrce.apraisal.repo.UserRepository;
 import com.cvrce.apraisal.service.AppraisalFormService;
 import com.cvrce.apraisal.service.DeadlineService;
-import com.cvrce.apraisal.service.NotificationService; // Added
-import com.cvrce.apraisal.dto.notification.NotificationDTO; // Added
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +35,6 @@ public class AppraisalFormServiceImpl implements AppraisalFormService {
     private final UserRepository userRepository;
     private final DeadlineService deadlineService;
     private final ObjectMapper objectMapper;
-    private final NotificationService notificationService; // Added
 
     @Override
     public AppraisalFormDTO createDraftForm(String academicYear, UUID userId) {
@@ -152,6 +149,7 @@ public class AppraisalFormServiceImpl implements AppraisalFormService {
         return mapToDTO(form);
     }
 
+
     @Override
     @org.springframework.transaction.annotation.Transactional
     public AppraisalFormDTO updateAppraisalStatus(UUID formId, AppraisalStatus newStatus, String remark, UUID changedByUserId) {
@@ -260,4 +258,5 @@ public class AppraisalFormServiceImpl implements AppraisalFormService {
 
         return updatedFormDTO;
     }
+
 }
