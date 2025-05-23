@@ -16,4 +16,5 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Query("SELECT u FROM User u WHERE u.department.id = :deptId AND u.deleted = false")
     List<User> findByDepartmentId(Long deptId);
 
+    List<User> findByRolesContains(com.cvrce.apraisal.entity.Role role); // Added method
 }
