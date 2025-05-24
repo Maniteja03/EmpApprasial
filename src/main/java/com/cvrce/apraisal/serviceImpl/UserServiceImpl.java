@@ -7,9 +7,12 @@ import com.cvrce.apraisal.repo.*;
 import com.cvrce.apraisal.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList; // Added for manual mapping example, though stream is used.
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -119,5 +122,40 @@ public class UserServiceImpl implements UserService {
                 .lastPromotionDate(user.getLastPromotionDate())
                 .departmentName(user.getDepartment() != null ? user.getDepartment().getName() : null)
                 .build();
+    }
+
+    @Override
+    public List<UserBasicInfoDTO> getStaffByAuthenticatedHodDepartment() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated() || "anonymousUser".equals(authentication.getPrincipal())) {
+            throw new IllegalStateException("User is not authenticated or authentication details are not available.");
+        }
+        String currentPrincipalName = authentication.getName(); // This is usually the username (e.g., employeeId or email)
+
+        // Assuming currentPrincipalName is employeeId. If it's email, adjust accordingly.
+        // The prompt example uses findByEmployeeId, but UserRepo does not have it. Let's assume it's email for now.
+        // If it must be employeeId, userRepository needs a findByEmployeeId method.
+        // For now, let's stick to email as it's more common for `authentication.getName()` and `userRepository` has `findByEmail`.
+        User authenticatedUser = userRepository.findByEmail(currentPrincipalName)
+                .orElseThrow(() -> new ResourceNotFoundException("Authenticated user '" + currentPrincipalName + "' not found in database."));
+
+        Department hodDepartment = authenticatedUser.getDepartment();
+        if (hodDepartment == null) {
+            throw new IllegalStateException("Authenticated HOD '" + currentPrincipalName + "' does not have an assigned department.");
+        }
+
+        Long departmentId = hodDepartment.getId();
+        List<User> usersInDepartment = userRepository.findByDepartmentId(departmentId);
+
+        // Map to UserBasicInfoDTO
+        return usersInDepartment.stream()
+                .map(user -> UserBasicInfoDTO.builder()
+                        .userId(user.getId())
+                        .employeeId(user.getEmployeeId())
+                        .fullName(user.getFullName())
+                        .email(user.getEmail())
+                        .dateOfJoining(user.getDateOfJoining())
+                        .build())
+                .collect(Collectors.toList());
     }
 }

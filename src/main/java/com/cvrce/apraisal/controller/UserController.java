@@ -5,6 +5,7 @@ import com.cvrce.apraisal.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize; // Added for @PreAuthorize
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
@@ -61,5 +62,13 @@ public class UserController {
         log.info("Soft deleting user {}", id);
         userService.softDeleteUser(id);
         return ResponseEntity.ok("User deleted (soft)");
+    }
+
+    @GetMapping("/hod/department/staff")
+    @PreAuthorize("hasAuthority('HOD')")
+    public ResponseEntity<List<UserBasicInfoDTO>> getHodDepartmentStaff() {
+        log.info("HOD fetching staff list for their department.");
+        List<UserBasicInfoDTO> staffList = userService.getStaffByAuthenticatedHodDepartment();
+        return ResponseEntity.ok(staffList);
     }
 }

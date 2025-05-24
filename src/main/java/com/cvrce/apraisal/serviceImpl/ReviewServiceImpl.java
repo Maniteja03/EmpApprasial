@@ -43,6 +43,7 @@ public class ReviewServiceImpl implements ReviewService {
     private final AppraisalFormService appraisalFormService; // Added AppraisalFormService
     private final ReviewerAssignmentRepository reviewerAssignmentRepository; // Added
     private final NotificationService notificationService; // Added
+    private final ReviewerAssignmentService reviewerAssignmentService; // Added
 
     @Override
     @Transactional
@@ -112,11 +113,31 @@ public class ReviewServiceImpl implements ReviewService {
                     newStatus = AppraisalStatus.REUPLOAD_REQUIRED; // To be handled by staff
                 } else if (review.getDecision() == ReviewDecision.APPROVE) {
                     // HOD approves their department's review, ready for Chairperson
-                    newStatus = AppraisalStatus.HOD_APPROVED; 
+                    newStatus = AppraisalStatus.HOD_APPROVED;
+                    reviewRemarksForStatusUpdate = "Approved by HOD " + reviewer.getFullName() + "." +
+                                                   (review.getRemarks() != null && !review.getRemarks().isEmpty() ? " HOD Remarks: " + review.getRemarks() : "");
                 } else if (review.getDecision() == ReviewDecision.FORWARD) {
-                    // HOD forwards to Verifying Staff
+                    UUID verifyingStaffUserId = dto.getVerifyingStaffUserId();
+                    if (verifyingStaffUserId == null) {
+                        throw new IllegalArgumentException("Verifying Staff User ID must be provided when forwarding for verification by HOD.");
+                    }
+                    User verifyingStaffUser = userRepo.findById(verifyingStaffUserId)
+                            .orElseThrow(() -> new ResourceNotFoundException("Chosen Verifying Staff User not found with ID: " + verifyingStaffUserId));
+
                     newStatus = AppraisalStatus.PENDING_VERIFICATION;
-                    // Later, add logic to assign to Verifying Staff (Step 4)
+                    
+                    String hodRemarks = review.getRemarks() != null && !review.getRemarks().isEmpty() ? " HOD Remarks: " + review.getRemarks() : "";
+                    reviewRemarksForStatusUpdate = "Forwarded for verification by HOD " + reviewer.getFullName() + 
+                                                   " to Verifying Staff " + verifyingStaffUser.getFullName() + 
+                                                   (verifyingStaffUser.getEmployeeId() != null ? " (ID: " + verifyingStaffUser.getEmployeeId() + ")" : "") + "." +
+                                                   hodRemarks;
+                    try {
+                        reviewerAssignmentService.assignToUserForReview(form.getId(), verifyingStaffUserId, ReviewLevel.VERIFYING_STAFF_REVIEW, reviewer.getId());
+                        log.info("Form {} assigned to Verifying Staff {} by HOD {}", form.getId(), verifyingStaffUserId, reviewer.getId());
+                    } catch (Exception e) {
+                        log.error("Failed to assign form {} to Verifying Staff {}: {}", form.getId(), verifyingStaffUserId, e.getMessage(), e);
+                        throw new IllegalStateException("Failed to assign form to Verifying Staff. Please try again or contact support. Form ID: " + form.getId(), e);
+                    }
                 }
                 break;
 
@@ -153,26 +174,52 @@ public class ReviewServiceImpl implements ReviewService {
             case CHAIRPERSON_REVIEW:
                 if (review.getDecision() == ReviewDecision.REUPLOAD) {
                     newStatus = AppraisalStatus.RETURNED_TO_HOD; // Chairperson sends back to HOD
+                    reviewRemarksForStatusUpdate = "Returned to HOD by Chairperson " + reviewer.getFullName() +
+                                                   (review.getRemarks() != null && !review.getRemarks().isEmpty() ? ". Remarks: " + review.getRemarks() : "");
                 } else if (review.getDecision() == ReviewDecision.APPROVE) {
-                     // This means Chairperson has reviewed and approved (e.g. after college committee)
-                     // but is not yet forwarding to Principal. Or it's an intermediate approval.
-                     // For the workflow: Chairperson forwards to Principal is a FORWARD decision.
-                    newStatus = AppraisalStatus.CHAIR_REVIEW; // Stays in CHAIR_REVIEW, or a new PENDING_CHAIRPERSON_FORWARD_TO_PRINCIPAL
+                    newStatus = AppraisalStatus.PENDING_PRINCIPAL_APPROVAL;
+                    reviewRemarksForStatusUpdate = "Approved by Chairperson " + reviewer.getFullName() + ". Pending Principal Approval." +
+                                                   (review.getRemarks() != null && !review.getRemarks().isEmpty() ? " Chairperson Remarks: " + review.getRemarks() : "");
                 } else if (review.getDecision() == ReviewDecision.FORWARD) {
                     // Chairperson forwards to Principal
                     newStatus = AppraisalStatus.PENDING_PRINCIPAL_APPROVAL;
-                    // Later, add logic to assign to Principal (Step 4)
+                    reviewRemarksForStatusUpdate = "Forwarded to Principal by Chairperson " + reviewer.getFullName() + "." +
+                                                   (review.getRemarks() != null && !review.getRemarks().isEmpty() ? " Chairperson Remarks: " + review.getRemarks() : "");
                 }
                 break;
 
             case PRINCIPAL_REVIEW: // New Level
                 if (review.getDecision() == ReviewDecision.REUPLOAD) {
                     newStatus = AppraisalStatus.RETURNED_TO_CHAIRPERSON; // Principal sends back to Chairperson
+                    reviewRemarksForStatusUpdate = "Form returned to Chairperson by Principal " + reviewer.getFullName() +
+                                                   (review.getRemarks() != null && !review.getRemarks().isEmpty() ? ". Principal's Remarks: " + review.getRemarks() : ".");
                 } else if (review.getDecision() == ReviewDecision.APPROVE) {
                     newStatus = AppraisalStatus.COMPLETED; // Final approval
+                    reviewRemarksForStatusUpdate = "Form approved and completed by Principal " + reviewer.getFullName() +
+                                                   (review.getRemarks() != null && !review.getRemarks().isEmpty() ? ". Principal's Remarks: " + review.getRemarks() : ".");
                 }
                 break;
         }
+        
+        // If Chairperson approved or forwarded, assign to Principal
+        if (review.getLevel() == ReviewLevel.CHAIRPERSON_REVIEW && 
+            newStatus == AppraisalStatus.PENDING_PRINCIPAL_APPROVAL) {
+            
+            User principalUser = userRepo.findFirstByRoles_NameIgnoreCase("PRINCIPAL")
+                .orElseThrow(() -> new ResourceNotFoundException("Principal user with role 'PRINCIPAL' not found. Cannot assign form."));
+            
+            try {
+                reviewerAssignmentService.assignToUserForReview(form.getId(), principalUser.getId(), ReviewLevel.PRINCIPAL_REVIEW, reviewer.getId());
+                log.info("Form {} assigned to Principal {} for review by Chairperson {}", form.getId(), principalUser.getId(), reviewer.getId());
+            } catch (Exception e) {
+                log.error("Error assigning form {} to Principal {}: {}", form.getId(), principalUser.getId(), e.getMessage(), e);
+                // Depending on policy, we might want to re-throw or handle this so the status update below doesn't happen
+                // For now, logging and continuing, but this could leave the form in PENDING_PRINCIPAL_APPROVAL without an assignment.
+                // Consider throwing a specific runtime exception to ensure transaction rollback if assignment fails.
+                throw new IllegalStateException("Failed to assign form to Principal after Chairperson approval/forwarding. Form ID: " + form.getId(), e);
+            }
+        }
+
 
         if (newStatus != null && newStatus != form.getStatus()) { // Only update if status is actually changing
             appraisalFormService.updateAppraisalStatus(form.getId(), newStatus, reviewRemarksForStatusUpdate, reviewer.getId());
@@ -183,34 +230,77 @@ public class ReviewServiceImpl implements ReviewService {
             String notificationMessage = null;
 
             if (newStatus == AppraisalStatus.REUPLOAD_REQUIRED) {
-                notificationTitle = "Action Required on Your Appraisal Form"; // New Title
+                notificationTitle = "Action Required on Your Appraisal Form";
                 notificationMessage = "Your appraisal form (ID: " + form.getId() + ") for academic year " + form.getAcademicYear() + 
                                       " requires corrections. Please contact your HOD to discuss and have the necessary changes made in the system. Reviewer remarks: " + 
-                                      (review.getRemarks() != null && !review.getRemarks().isEmpty() ? review.getRemarks() : "No specific remarks provided by reviewer."); // New Message
-            } else if (newStatus == AppraisalStatus.COMPLETED) {
-                notificationTitle = "Appraisal Form Approved";
+                                      (review.getRemarks() != null && !review.getRemarks().isEmpty() ? review.getRemarks() : "No specific remarks provided by reviewer.");
+                
+                NotificationDTO staffNotificationForReupload = NotificationDTO.builder()
+                    .userId(form.getUser().getId()).title(notificationTitle).message(notificationMessage).build();
+                try {
+                    notificationService.sendNotification(staffNotificationForReupload);
+                    log.info("Sent '{}' notification to staff {} for form {}", notificationTitle, form.getUser().getId(), form.getId());
+                } catch (Exception e) {
+                    log.error("Failed to send '{}' notification to staff {}: {}", notificationTitle, form.getUser().getId(), e.getMessage(), e);
+                }
+
+            } else if (newStatus == AppraisalStatus.COMPLETED && review.getLevel() == ReviewLevel.PRINCIPAL_REVIEW) {
+                notificationTitle = "Appraisal Form Approved by Principal";
                 notificationMessage = "Congratulations! Your appraisal form (ID: " + form.getId() + ") for academic year " + form.getAcademicYear() + 
-                                      " has been approved and completed.";
-            } else if (newStatus == AppraisalStatus.RETURNED_TO_HOD || newStatus == AppraisalStatus.RETURNED_TO_CHAIRPERSON) {
-                // These might be relevant for the staff to know their form is moving back in the chain, though not directly actionable by them.
-                // For now, as per prompt, focusing on REUPLOAD_REQUIRED and COMPLETED.
-                // Consider adding these if comprehensive staff visibility is desired.
-            }
+                                      " has been finally approved by the Principal." + 
+                                      (review.getRemarks() != null && !review.getRemarks().isEmpty() ? " Principal's Remarks: " + review.getRemarks() : "");
+                
+                NotificationDTO staffNotificationForCompletion = NotificationDTO.builder()
+                    .userId(form.getUser().getId()).title(notificationTitle).message(notificationMessage).build();
+                try {
+                    notificationService.sendNotification(staffNotificationForCompletion);
+                    log.info("Sent '{}' notification to staff {} for form {}", notificationTitle, form.getUser().getId(), form.getId());
+                } catch (Exception e) {
+                    log.error("Failed to send '{}' notification to staff {}: {}", notificationTitle, form.getUser().getId(), e.getMessage(), e);
+                }
 
-
-            if (notificationTitle != null && notificationMessage != null) {
+            } else if (newStatus == AppraisalStatus.RETURNED_TO_CHAIRPERSON && review.getLevel() == ReviewLevel.PRINCIPAL_REVIEW) {
+                // Notify Staff Member
+                String staffNotifTitle = "Appraisal Form Returned to Chairperson by Principal";
+                String staffNotifMessage = "Your appraisal form (ID: " + form.getId() + ") for academic year " + form.getAcademicYear() + 
+                                           " has been reviewed by the Principal and returned to the Chairperson. " +
+                                           "Principal's Remarks: " + (review.getRemarks() != null && !review.getRemarks().isEmpty() ? review.getRemarks() : "No specific remarks provided.");
+                
                 NotificationDTO staffNotification = NotificationDTO.builder()
-                        .userId(form.getUser().getId()) // Notify the original staff member
-                        .title(notificationTitle)
-                        .message(notificationMessage)
+                        .userId(form.getUser().getId())
+                        .title(staffNotifTitle)
+                        .message(staffNotifMessage)
                         .build();
                 try {
                     notificationService.sendNotification(staffNotification);
-                    log.info("Sent '{}' notification to staff {} for form {}", notificationTitle, form.getUser().getId(), form.getId());
+                    log.info("Sent '{}' notification to staff {} for form {}", staffNotifTitle, form.getUser().getId(), form.getId());
                 } catch (Exception e) {
-                    log.error("Failed to send '{}' notification to staff {}: {}", notificationTitle, form.getUser().getId(), e.getMessage());
+                    log.error("Failed to send '{}' notification to staff {}: {}", staffNotifTitle, form.getUser().getId(), e.getMessage(), e);
+                }
+
+                // Notify Chairperson
+                User chairperson = userRepo.findFirstByRoles_NameIgnoreCase("CHAIRPERSON")
+                        .orElseThrow(() -> new ResourceNotFoundException("Chairperson user with role 'CHAIRPERSON' not found. Cannot send notification."));
+                
+                String chairpersonNotifTitle = "Action Required: Appraisal Form Returned by Principal";
+                String chairpersonNotifMessage = "The appraisal form (ID: " + form.getId() + ") for staff member " + form.getUser().getFullName() + 
+                                                 " (Academic Year: " + form.getAcademicYear() + ") has been returned by the Principal. " +
+                                                 "Principal's Remarks: " + (review.getRemarks() != null && !review.getRemarks().isEmpty() ? review.getRemarks() : "No specific remarks provided.") +
+                                                 " Please review and take necessary action.";
+
+                NotificationDTO chairpersonNotification = NotificationDTO.builder()
+                        .userId(chairperson.getId())
+                        .title(chairpersonNotifTitle)
+                        .message(chairpersonNotifMessage)
+                        .build();
+                try {
+                    notificationService.sendNotification(chairpersonNotification);
+                    log.info("Sent '{}' notification to Chairperson {} for form {}", chairpersonNotifTitle, chairperson.getId(), form.getId());
+                } catch (Exception e) {
+                    log.error("Failed to send '{}' notification to Chairperson {}: {}", chairpersonNotifTitle, chairperson.getId(), e.getMessage(), e);
                 }
             }
+            // Consider adding other general notifications for RETURNED_TO_HOD if not covered by specific review level logic.
         }
         // Workflow logic ends
 

@@ -14,4 +14,5 @@ public class ReviewDTO {
     private String remarks;
     private String level;
     private LocalDateTime reviewedAt;
+    private UUID verifyingStaffUserId; // Optional: ID of the verifying staff if applicable for the review level/decision
 }
