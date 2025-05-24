@@ -12,4 +12,6 @@ public interface UserService {
     UserResponseDTO updateUser(UUID id, UserUpdateDTO dto);
     void setUserEnabled(UUID userId, boolean enabled);
     void softDeleteUser(UUID id);
+
+    List<UserBasicInfoDTO> getStaffByAuthenticatedHodDepartment();
 }

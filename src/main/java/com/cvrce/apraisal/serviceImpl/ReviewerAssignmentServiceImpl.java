@@ -96,10 +96,30 @@ public class ReviewerAssignmentServiceImpl implements ReviewerAssignmentService 
         User assigner = userRepo.findById(assignedByUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("Assigner User not found: " + assignedByUserId));
 
+        User submittingUser = form.getUser();
+        if (submittingUser == null) {
+            throw new IllegalStateException("Submitting user not found for form: " + formId);
+        }
+        Department submittingUserDepartment = submittingUser.getDepartment();
+        if (submittingUserDepartment == null) {
+            throw new IllegalStateException("Department not found for submitting user: " + submittingUser.getFullName());
+        }
+
         List<ReviewerAssignment> assignments = new ArrayList<>();
         for (UUID memberId : memberIds) {
             User committeeMember = userRepo.findById(memberId)
                     .orElseThrow(() -> new ResourceNotFoundException("Committee member User not found: " + memberId));
+
+            Department committeeMemberDepartment = committeeMember.getDepartment();
+            if (committeeMemberDepartment == null) {
+                throw new IllegalStateException("Department not found for committee member: " + committeeMember.getFullName());
+            }
+
+            if (!submittingUserDepartment.getId().equals(committeeMemberDepartment.getId())) {
+                throw new IllegalArgumentException("Committee member " + committeeMember.getFullName() +
+                        " (" + committeeMember.getEmployeeId() + ") must be from the same department (" +
+                        submittingUserDepartment.getName() + ") as the form submitter.");
+            }
             
             ReviewerAssignment assignment = ReviewerAssignment.builder()
                     .reviewer(committeeMember)
@@ -142,10 +162,30 @@ public class ReviewerAssignmentServiceImpl implements ReviewerAssignmentService 
         User assigner = userRepo.findById(assignedByUserId)
                 .orElseThrow(() -> new ResourceNotFoundException("Assigner User not found: " + assignedByUserId));
 
+        User submittingUser = form.getUser();
+        if (submittingUser == null) {
+            throw new IllegalStateException("Submitting user not found for form: " + formId);
+        }
+        Department submittingUserDepartment = submittingUser.getDepartment();
+        if (submittingUserDepartment == null) {
+            throw new IllegalStateException("Department not found for submitting user: " + submittingUser.getFullName());
+        }
+
         List<ReviewerAssignment> assignments = new ArrayList<>();
         for (UUID memberId : memberIds) {
             User committeeMember = userRepo.findById(memberId)
                     .orElseThrow(() -> new ResourceNotFoundException("Committee member User not found: " + memberId));
+            
+            Department committeeMemberDepartment = committeeMember.getDepartment();
+            if (committeeMemberDepartment == null) {
+                throw new IllegalStateException("Department not found for committee member: " + committeeMember.getFullName());
+            }
+
+            if (submittingUserDepartment.getId().equals(committeeMemberDepartment.getId())) {
+                throw new IllegalArgumentException("College Committee member " + committeeMember.getFullName() +
+                        " (" + committeeMember.getEmployeeId() + ") must be from a different department than the form submitter's department (" +
+                        submittingUserDepartment.getName() + ").");
+            }
 
             ReviewerAssignment assignment = ReviewerAssignment.builder()
                     .reviewer(committeeMember)
