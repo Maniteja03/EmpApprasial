@@ -5,7 +5,8 @@ import com.cvrce.apraisal.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
-import org.springframework.security.access.prepost.PreAuthorize; // Added for @PreAuthorize
+import jakarta.validation.Valid; // Added for @Valid
+import org.springframework.security.access.prepost.PreAuthorize; 
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
@@ -38,10 +39,23 @@ public class UserController {
         return ResponseEntity.ok(userService.getUsersByDepartment(deptId));
     }
 
-    @PostMapping("/create")
-    public ResponseEntity<UserResponseDTO> createUser(@RequestBody UserCreateDTO dto) {
-        log.info("Creating new user with email: {}", dto.getEmail());
-        return new ResponseEntity<>(userService.createUser(dto), HttpStatus.CREATED);
+    // Removing the old /create endpoint as its DTO and service method signature have changed.
+    // The new endpoint /superadmin/create will handle user creation by SUPER_ADMIN.
+    // @PostMapping("/create")
+    // public ResponseEntity<UserResponseDTO> createUser(@RequestBody UserCreateDTO dto) {
+    //     log.info("Creating new user with email: {}", dto.getEmail());
+    //     // This line would cause a compile error as userService.createUser now expects UserCreationRequestDTO
+    //     // return new ResponseEntity<>(userService.createUser(dto), HttpStatus.CREATED);
+    //     return null; // Placeholder if not removing
+    // }
+
+    @PostMapping("/superadmin/create")
+    @PreAuthorize("hasAuthority('SUPER_ADMIN')")
+    public ResponseEntity<UserBasicInfoDTO> createUserBySuperAdmin(@Valid @RequestBody UserCreationRequestDTO creationRequest) {
+        log.info("Super Admin attempting to create user with email: {}", creationRequest.getEmail());
+        UserBasicInfoDTO createdUser = userService.createUser(creationRequest);
+        log.info("User {} created successfully by Super Admin", createdUser.getUserId());
+        return new ResponseEntity<>(createdUser, HttpStatus.CREATED);
     }
 
     @PutMapping("/{id}")
