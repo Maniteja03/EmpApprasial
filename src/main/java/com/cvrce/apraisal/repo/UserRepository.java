@@ -19,4 +19,6 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     List<User> findByRolesContains(com.cvrce.apraisal.entity.Role role); // Added method
 
     Optional<User> findFirstByRoles_NameIgnoreCase(String roleName);
+
+    boolean existsByEmployeeId(String employeeId);
 }

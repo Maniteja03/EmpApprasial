@@ -38,6 +38,8 @@ class UserServiceImplTest {
     private DepartmentRepository departmentRepository; // Dependency of UserServiceImpl
     @Mock
     private PasswordEncoder passwordEncoder; // Dependency of UserServiceImpl
+    @Mock
+    private NotificationService notificationService; // Added for createUser tests
 
     @Mock
     private Authentication authentication;
@@ -47,10 +49,14 @@ class UserServiceImplTest {
     @InjectMocks
     private UserServiceImpl userService;
 
-    private User hodUser;
+    private User hodUser; // Used for getStaffByAuthenticatedHodDepartment tests
+    private User superAdminUser; // For createUser tests
     private Department hodDepartment;
-    private final String hodEmail = "hod@example.com";
+    private final String hodEmail = "hod@example.com"; // For getStaffByAuthenticatedHodDepartment tests
+    private final String superAdminEmail = "superadmin@example.com";
     private final Long hodDepartmentId = 1L;
+    private Department testDepartment;
+
 
     @BeforeEach
     void setUp() {
@@ -58,14 +64,34 @@ class UserServiceImplTest {
         when(securityContext.getAuthentication()).thenReturn(authentication);
         SecurityContextHolder.setContext(securityContext);
 
-        hodDepartment = Department.builder().id(hodDepartmentId).name("HOD Department").build();
+        // For getStaffByAuthenticatedHodDepartment tests
+        testDepartment = Department.builder().id(hodDepartmentId).name("HOD Department").build();
         hodUser = User.builder()
                 .id(UUID.randomUUID())
                 .email(hodEmail)
                 .fullName("HOD User")
-                .department(hodDepartment)
+                .department(testDepartment)
                 .employeeId("HOD001")
                 .dateOfJoining(LocalDate.now().minusYears(5))
+                .build();
+        
+        // For createUser tests
+        com.cvrce.apraisal.entity.Role superAdminRole = com.cvrce.apraisal.entity.Role.builder().id(1L).name("SUPER_ADMIN").build();
+        superAdminUser = User.builder()
+                .id(UUID.randomUUID())
+                .email(superAdminEmail)
+                .fullName("Super Admin User")
+                .roles(Collections.singleton(superAdminRole))
+                .build();
+    }
+
+    private UserCreationRequestDTO createSampleUserCreationRequestDTO() {
+        return UserCreationRequestDTO.builder()
+                .fullName("New User")
+                .email("newuser@example.com")
+                .employeeId("EMP001")
+                .departmentId(hodDepartmentId) // Using hodDepartmentId for simplicity
+                .roleNames(Collections.singleton("STAFF"))
                 .build();
     }
 
@@ -194,6 +220,176 @@ class UserServiceImplTest {
         // Assert
         assertNotNull(result);
         assertTrue(result.isEmpty());
+    }
+
+    // --- Tests for UserServiceImpl.createUser() ---
+
+    @Test
+    void testCreateUser_BySuperAdmin_Successful() {
+        // Arrange
+        UserCreationRequestDTO requestDTO = createSampleUserCreationRequestDTO();
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getName()).thenReturn(superAdminEmail);
+        when(userRepository.findByEmail(superAdminEmail)).thenReturn(Optional.of(superAdminUser));
+
+        when(userRepository.existsByEmail(requestDTO.getEmail())).thenReturn(false);
+        when(userRepository.existsByEmployeeId(requestDTO.getEmployeeId())).thenReturn(false);
+        when(departmentRepository.findById(requestDTO.getDepartmentId())).thenReturn(Optional.of(testDepartment));
+        com.cvrce.apraisal.entity.Role staffRole = com.cvrce.apraisal.entity.Role.builder().id(2L).name("STAFF").build();
+        when(roleRepository.findByName("STAFF")).thenReturn(Optional.of(staffRole));
+        when(passwordEncoder.encode("Password@123")).thenReturn("hashedPassword");
+
+        User savedUser = User.builder()
+                .id(UUID.randomUUID())
+                .fullName(requestDTO.getFullName())
+                .email(requestDTO.getEmail())
+                .employeeId(requestDTO.getEmployeeId())
+                .department(testDepartment)
+                .roles(Collections.singleton(staffRole))
+                .password("hashedPassword")
+                .dateOfJoining(LocalDate.now())
+                .enabled(true)
+                .deleted(false)
+                .build();
+        when(userRepository.save(any(User.class))).thenReturn(savedUser);
+        
+        // Act
+        UserBasicInfoDTO resultDTO = userService.createUser(requestDTO);
+
+        // Assert
+        assertNotNull(resultDTO);
+        assertEquals(savedUser.getId(), resultDTO.getUserId());
+        assertEquals(requestDTO.getFullName(), resultDTO.getFullName());
+        assertEquals(requestDTO.getEmail(), resultDTO.getEmail());
+        assertEquals(requestDTO.getEmployeeId(), resultDTO.getEmployeeId());
+        assertEquals(LocalDate.now(), resultDTO.getDateOfJoining());
+
+        verify(userRepository).save(any(User.class));
+        
+        ArgumentCaptor<com.cvrce.apraisal.dto.notification.NotificationDTO> notificationCaptor = ArgumentCaptor.forClass(com.cvrce.apraisal.dto.notification.NotificationDTO.class);
+        verify(notificationService).sendNotification(notificationCaptor.capture());
+        assertTrue(notificationCaptor.getValue().getMessage().contains("Your temporary password is: Password@123"));
+    }
+
+    @Test
+    void testCreateUser_ByNonSuperAdmin_ThrowsAccessDeniedException() {
+        // Arrange
+        UserCreationRequestDTO requestDTO = createSampleUserCreationRequestDTO();
+        User nonAdminUser = User.builder().id(UUID.randomUUID()).email("nonadmin@example.com").roles(Collections.emptySet()).build();
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getName()).thenReturn("nonadmin@example.com");
+        when(userRepository.findByEmail("nonadmin@example.com")).thenReturn(Optional.of(nonAdminUser));
+
+        // Act & Assert
+        assertThrows(org.springframework.security.access.AccessDeniedException.class, () -> {
+            userService.createUser(requestDTO);
+        });
+    }
+
+    @Test
+    void testCreateUser_EmailAlreadyExists_ThrowsIllegalArgumentException() {
+        // Arrange
+        UserCreationRequestDTO requestDTO = createSampleUserCreationRequestDTO();
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getName()).thenReturn(superAdminEmail);
+        when(userRepository.findByEmail(superAdminEmail)).thenReturn(Optional.of(superAdminUser));
+        when(userRepository.existsByEmail(requestDTO.getEmail())).thenReturn(true);
+
+        // Act & Assert
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
+            userService.createUser(requestDTO);
+        });
+        assertEquals("Email already exists: " + requestDTO.getEmail(), exception.getMessage());
+    }
+
+    @Test
+    void testCreateUser_EmployeeIdAlreadyExists_ThrowsIllegalArgumentException() {
+        // Arrange
+        UserCreationRequestDTO requestDTO = createSampleUserCreationRequestDTO();
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getName()).thenReturn(superAdminEmail);
+        when(userRepository.findByEmail(superAdminEmail)).thenReturn(Optional.of(superAdminUser));
+        when(userRepository.existsByEmail(requestDTO.getEmail())).thenReturn(false); // Email is fine
+        when(userRepository.existsByEmployeeId(requestDTO.getEmployeeId())).thenReturn(true); // EmployeeId exists
+
+        // Act & Assert
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
+            userService.createUser(requestDTO);
+        });
+        assertEquals("Employee ID already exists: " + requestDTO.getEmployeeId(), exception.getMessage());
+    }
+
+    @Test
+    void testCreateUser_DepartmentNotFound_ThrowsResourceNotFoundException() {
+        // Arrange
+        UserCreationRequestDTO requestDTO = createSampleUserCreationRequestDTO();
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getName()).thenReturn(superAdminEmail);
+        when(userRepository.findByEmail(superAdminEmail)).thenReturn(Optional.of(superAdminUser));
+        when(userRepository.existsByEmail(requestDTO.getEmail())).thenReturn(false);
+        when(userRepository.existsByEmployeeId(requestDTO.getEmployeeId())).thenReturn(false);
+        when(departmentRepository.findById(requestDTO.getDepartmentId())).thenReturn(Optional.empty());
+
+        // Act & Assert
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class, () -> {
+            userService.createUser(requestDTO);
+        });
+        assertEquals("Department not found with ID: " + requestDTO.getDepartmentId(), exception.getMessage());
+    }
+
+    @Test
+    void testCreateUser_RoleNotFound_ThrowsResourceNotFoundException() {
+        // Arrange
+        UserCreationRequestDTO requestDTO = createSampleUserCreationRequestDTO(); // Requests "STAFF" role
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getName()).thenReturn(superAdminEmail);
+        when(userRepository.findByEmail(superAdminEmail)).thenReturn(Optional.of(superAdminUser));
+        when(userRepository.existsByEmail(requestDTO.getEmail())).thenReturn(false);
+        when(userRepository.existsByEmployeeId(requestDTO.getEmployeeId())).thenReturn(false);
+        when(departmentRepository.findById(requestDTO.getDepartmentId())).thenReturn(Optional.of(testDepartment));
+        when(roleRepository.findByName("STAFF")).thenReturn(Optional.empty()); // Role "STAFF" not found
+
+        // Act & Assert
+        ResourceNotFoundException exception = assertThrows(ResourceNotFoundException.class, () -> {
+            userService.createUser(requestDTO);
+        });
+        assertEquals("Role not found: STAFF", exception.getMessage());
+    }
+
+    @Test
+    void testCreateUser_NotificationFailure_UserStillCreated() {
+        // Arrange
+        UserCreationRequestDTO requestDTO = createSampleUserCreationRequestDTO();
+        when(authentication.isAuthenticated()).thenReturn(true);
+        when(authentication.getName()).thenReturn(superAdminEmail);
+        when(userRepository.findByEmail(superAdminEmail)).thenReturn(Optional.of(superAdminUser));
+        when(userRepository.existsByEmail(requestDTO.getEmail())).thenReturn(false);
+        when(userRepository.existsByEmployeeId(requestDTO.getEmployeeId())).thenReturn(false);
+        when(departmentRepository.findById(requestDTO.getDepartmentId())).thenReturn(Optional.of(testDepartment));
+        com.cvrce.apraisal.entity.Role staffRole = com.cvrce.apraisal.entity.Role.builder().id(2L).name("STAFF").build();
+        when(roleRepository.findByName("STAFF")).thenReturn(Optional.of(staffRole));
+        when(passwordEncoder.encode("Password@123")).thenReturn("hashedPassword");
+
+        User savedUser = User.builder() // Same as successful creation
+                .id(UUID.randomUUID()).fullName(requestDTO.getFullName()).email(requestDTO.getEmail())
+                .employeeId(requestDTO.getEmployeeId()).department(testDepartment)
+                .roles(Collections.singleton(staffRole)).password("hashedPassword")
+                .dateOfJoining(LocalDate.now()).enabled(true).deleted(false).build();
+        when(userRepository.save(any(User.class))).thenReturn(savedUser);
+
+        // Mock notificationService to throw an exception
+        doThrow(new RuntimeException("Simulated Notification Service Error"))
+            .when(notificationService).sendNotification(any(com.cvrce.apraisal.dto.notification.NotificationDTO.class));
+        
+        // Act
+        UserBasicInfoDTO resultDTO = userService.createUser(requestDTO);
+
+        // Assert
+        assertNotNull(resultDTO); // User creation should still succeed
+        assertEquals(savedUser.getId(), resultDTO.getUserId());
+        verify(userRepository).save(any(User.class)); // Ensure user was saved
+        verify(notificationService).sendNotification(any(com.cvrce.apraisal.dto.notification.NotificationDTO.class)); // Verify it was called
+        // Further log verification is tricky without specific setup, but the successful DTO return is key.
     }
 }
 </tbody>
